@@ -102,9 +102,16 @@ end
 local function get_hashed_canonical_request(timestamp, host, uri)
   ngx.req.read_body()
 
-  local digest = get_sha256_digest(ngx.req.get_body_data() or '')
+  local request_body = ngx.req.get_body_data() or ''
+  local digest = get_sha256_digest(request_body)
 
   ngx.req.set_header('x-amz-content-sha256', digest)
+
+  if #request_body > 0 then
+    ngx.req.set_header('content-length', #request_body)
+  else
+    ngx.req.set_header('content-length', nil)
+  end
 
   local canonical_request =
     ngx.var.request_method .. '\n'
