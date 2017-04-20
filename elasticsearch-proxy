@@ -1,0 +1,14 @@
+#!/bin/bash
+
+set -m
+set -e
+
+REMOTE_HOST=$1
+LOCAL_PORT=$2
+CONF=/usr/local/openresty/nginx/conf/nginx.conf
+
+sed -i "s/__REMOTE_HOST__/${REMOTE_HOST}/g" ${CONF}
+sed -i "s/__LOCAL_PORT__/${LOCAL_PORT}/g" ${CONF}
+
+exec /usr/local/openresty/bin/openresty -c ${CONF}
+
