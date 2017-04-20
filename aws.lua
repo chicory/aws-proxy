@@ -4,6 +4,7 @@ local cjson = require 'cjson'
 local resty_hmac = require 'resty.hmac'
 local resty_sha256 = require 'resty.sha256'
 local str = require 'resty.string'
+local ordered_pairs = require 'resty.ordered_pairs'
 local _M = { _VERSION = '0.1.0' }
 
 local function get_credentials ()
@@ -61,29 +62,65 @@ local function get_cred_scope(timestamp, region, service)
     .. '/aws4_request'
 end
 
-local function get_signed_headers()
-  return 'host;x-amz-content-sha256;x-amz-date'
-end
-
 local function get_sha256_digest(s)
   local h = resty_sha256:new()
   h:update(s or '')
   return str.to_hex(h:final())
 end
 
+local function get_canonical_uri(uri)
+  return uri
+end
+
+local function get_canonical_query_string(uri)
+  return ''
+end
+
+local function get_canonical_headers()
+  local headers = ngx.req.get_headers()
+  local canonical_headers = ''
+  for k, v in ordered_pairs(headers) do
+    -- trim leading and trailing whitespace
+    v = v:gsub("^%s*(.-)%s*$", "%1")
+    canonical_headers = canonical_headers .. k:lower() .. ':' .. v .. '\n'
+
+--    io.stderr:write("\nHEADER:\n")
+--    io.stderr:write(k:lower() .. ':' .. v .. '\n')
+  end
+  return canonical_headers
+end
+
+local function get_signed_headers()
+  local headers = ngx.req.get_headers()
+  local signed_headers = ''
+  for k, v in ordered_pairs(headers) do
+    signed_headers = signed_headers .. k:lower() .. ';'
+  end
+  return signed_headers:sub(1, -2)
+end
+
 local function get_hashed_canonical_request(timestamp, host, uri)
-  local digest = get_sha256_digest(ngx.var.request_body)
-  local canonical_request = ngx.var.request_method .. '\n'
-    .. uri .. '\n'
-    .. '\n'
-    .. 'host:' .. host .. '\n'
-    .. 'x-amz-content-sha256:' .. '\n'
-    .. 'x-amz-date:' .. get_iso8601_basic(timestamp) .. '\n'
-    .. '\n'
+  ngx.req.read_body()
+
+  local digest = get_sha256_digest(ngx.req.get_body_data() or '')
+
+  ngx.req.set_header('x-amz-content-sha256', digest)
+
+  local canonical_request =
+    ngx.var.request_method .. '\n'
+    .. get_canonical_uri(uri) .. '\n'
+    .. get_canonical_query_string(uri) .. '\n'
+    .. get_canonical_headers() .. '\n'
     .. get_signed_headers() .. '\n'
     .. digest
---    io.stderr:write("\nCANONICAL REQUEST:\n")
---    io.stderr:write(canonical_request)
+
+--  io.stderr:write("\nCANONICAL REQUEST:\n")
+--  io.stderr:write(canonical_request)
+--  io.stderr:write("\n\n")
+--  io.stderr:write(ngx.req.get_body_data() or '')
+--  io.stderr:write("\n\n")
+
+  ngx.req.discard_body()
   return get_sha256_digest(canonical_request)
 end
 
@@ -102,12 +139,15 @@ end
 local function get_authorization(keys, timestamp, region, service, host, uri)
   local derived_signing_key = get_derived_signing_key(keys, timestamp, region, service)
   local string_to_sign = get_string_to_sign(timestamp, region, service, host, uri)
---  io.stderr:write("\nSTRING TO SIGN:\n")
---  io.stderr:write(string_to_sign)
   local auth = 'AWS4-HMAC-SHA256 '
     .. 'Credential=' .. keys['access_key'] .. '/' .. get_cred_scope(timestamp, region, service)
     .. ', SignedHeaders=' .. get_signed_headers()
     .. ', Signature=' .. get_signature(derived_signing_key, string_to_sign)
+
+  --  io.stderr:write("\nSTRING TO SIGN:\n")
+  --  io.stderr:write(string_to_sign)
+  --  io.stderr:write("\n")
+
   return auth
 end
 
@@ -130,22 +170,24 @@ local function get_service_and_region(host)
 end
 
 local function aws_set_headers(host, uri)
+  ngx.req.set_header('host', host)
+  ngx.req.set_header('x-amz-date', get_iso8601_basic(timestamp))
+
   local creds = get_credentials()
   local timestamp = tonumber(ngx.time())
   local service, region = get_service_and_region(host)
   local auth = get_authorization(creds, timestamp, region, service, host, uri)
 
   ngx.req.set_header('Authorization', auth)
-  ngx.req.set_header('Host', host)
-  ngx.req.set_header('x-amz-date', get_iso8601_basic(timestamp))
+
   if creds['security_token'] ~= nil then
     ngx.req.set_header('x-amz-security-token', creds['security_token'])
   end
 end
 
 local function s3_set_headers(host, uri)
+
   aws_set_headers(host, uri)
-  ngx.req.set_header('x-amz-content-sha256', get_sha256_digest(ngx.var.request_body))
 end
 
 _M.aws_set_headers = aws_set_headers

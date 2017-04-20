@@ -117,6 +117,7 @@ RUN ln -sf /dev/stderr /usr/local/openresty/nginx/logs/error.log
 
 # Add custom configuration files and lua scripts
 ADD nginx.conf /usr/local/openresty/nginx/conf/nginx.conf
+ADD ordered_pairs.lua /usr/local/openresty/lualib/resty/ordered_pairs.lua
 ADD hmac.lua /usr/local/openresty/lualib/resty/hmac.lua
 ADD aws.lua /usr/local/openresty/lualib/resty/aws.lua
 ADD elasticsearch-proxy /elasticsearch-proxy
